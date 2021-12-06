@@ -29,7 +29,7 @@
  */
 
 /**
- * @file    Test_1.c
+ * @file    Reto_Varroc.c
  * @brief   Application entry point.
  */
 #include <stdio.h>
@@ -40,115 +40,132 @@
 #include "MKL25Z4.h"
 #include "fsl_debug_console.h"
 /* TODO: insert other include files here. */
+#include "math.h"
+#include <PWM.h>
+#include <ADC.h>
+#include <TIMER0.h>
+#include <delay.h>
 
 /* TODO: insert other definitions and declarations here. */
-void PORT_INIT(void);
+float e_0 = 0.0;
+float e_1 = 0.0;
+float e_2 = 0.0;
 
-unsigned int GET_ADC(void);
+float r_1 = 0.0;
+float T_1 = 0.0;
 
+float u_0 = 0.0;
+float u_1 = 0.0;
 
-void LEDR(void);
-void LEDG(void);
-void LEDB(void);
-void LEDS_OFF(void);
+float q_0 = 0.0;
+float q_1 = 0.0;
+float q_2 = 0.0;
 
+void PID();
+void PORTB_Init();
 
-void __delay(unsigned int ms);
+void LPTMR0_IRQHandler(){
+
+	LPTMR0->CSR |= (1 << 7);			// Flag of Timer 0
+
+	//GPIOB->PTOR |= (1 << 18);
+
+	PID();
+
+}
+
 /*
  * @brief   Application entry point.
  */
 int main(void) {
 
-	unsigned int adc_value;
+	unsigned int ms = 200;			//Tiempo de interrupciones
 
-    PORT_INIT();
+	float VoltajeTer = 0.0;
+	float ResistenciaTer = 0.0;
+	float TempCelcius = 0.0;
+	float VCC = 3.3;				// CAMBIAR SI SE USAN 5V
+
+	int TempAmbiente = 23;
+	int R = 5500;					// CAMBIAR DEPENDIENDO DE LA RESISTENCIA
+	int Rz = 47000;					// VERIFICAR ANTES DE CONECTAR
+	int B = 4101;
+	int Ts = 10;
+
+	int kp = 8;
+	int ti = 5;
+	int td = 0;
+
+	r_1 = 35.0; 					//Temperatura referencia
+
+	q_0 = kp * (1+Ts/(2.0 * ti)+td/Ts);
+	q_1 = -kp * (1-Ts/(2.0 * ti)+(2.0 * td)/Ts);
+	q_2 = (kp*td)/Ts;
+
+	PWM_Init();
+	ADC_Init();
+	PORTB_Init();
+	LPTMR_Init(ms);
 
 	while(1){
 
-	    adc_value = GET_ADC();
+		GPIOB->PSOR |= (3 << 18);
 
-	    if ( adc_value < 0x3333 && adc_value >= 0x0000 ){
-	    	LEDR();
-	    }
-	    if ( adc_value < 0x6666 && adc_value > 0x3333 ){
-	    	LEDR();
-	    	LEDG();
-	    }
-	    if ( adc_value < 0x9999 && adc_value > 0x6666 ){
-	    	LEDG();
-	    }
-	    if ( adc_value < 0xCCCC && adc_value > 0x9999 ){
-	    	LEDG();
-	    	LEDB();
-	    }
-	    if ( adc_value <= 0xFFFF && adc_value > 0xCCCC ){
-	    	LEDB();
-	    }
 
-	    LEDS_OFF();
+		float aux = 0.0;
 
-	}
+		for(int i = 0; i < 10; i++){
 
-    return 0 ;
-}
+			/*
+			TempC = float(analogRead(Termistor) * (500.0 / 1023.0) );
+			*/
 
-void PORT_INIT(void){
+			VoltajeTer = ADC_value();
+			VoltajeTer = 3.3 * (VoltajeTer/65535);					//CAMBIAR SI SE USAN 5V
 
-	SIM->SCGC6 |= 1 << 27;			//RELOJ PARA ADC
+			ResistenciaTer = (-R * VoltajeTer) / (VoltajeTer - VCC);
+			TempCelcius =  1/((log(ResistenciaTer / Rz) / B) + pow((TempAmbiente + 273), -1));
+			TempCelcius = TempCelcius - 273.15;
 
-	SIM->SCGC5 |= 0x00001400;		//PORTD AND PORTB
+			aux = aux + TempCelcius;
 
-	for(int i = 0; i < 31; i++){
-
-		if (i){
-			PORTB->PCR[i] |= 0x00000100;
-			PORTB->PCR[i] &= 0xFFFFF9FF;
 		}
 
-
-		PORTD->PCR[i] |= 0x00000100;
-		PORTD->PCR[i] &= 0xFFFFF9FF;
+		T_1 = aux/10.0;
 
 	}
 
-	GPIOB->PSOR |= 0xFFFFFFFE;
-	GPIOD->PSOR |= 0xFFFFFFFF;
-
-	GPIOB->PDDR |= 0xFFFFFFFE;
-	GPIOD->PDDR |= 0xFFFFFFFF;
-
+	return 0;
 }
 
-unsigned int GET_ADC(){
+void PID(){
 
-	ADC0->CFG1 |= 0x0C;				//CONFIG ADC
+	e_0 = (r_1 - T_1);
 
-	ADC0->SC1[0] = 0x08;			//CHANNEL ADC
 
-	while((ADC0->SC1[0] & ADC_SC1_COCO_MASK) != ADC_SC1_COCO_MASK);
+	u_0 = u_1+q_0 * e_0+q_1 * e_1+q_2 * e_2;
 
-	return ADC0->R[0];
-}
-
-void __delay(unsigned int ms){
-	for(int i = 0; i < ms; i++){
-		__asm volatile ("nop");
+	if (u_0 >= 100.0){
+		u_0 = 100.0;
 	}
+
+	if (u_0 <= 0.0 || r_1 == T_1){
+		u_0 = 0.0;
+		GPIOB->PCOR |= (1 << 19);
+	}
+
+	e_2 = e_1;
+	e_1 = e_0;
+	u_1 = u_0;
+
+	PWM_Set(1000, u_0);
+
 }
 
-
-void LEDR(void){
-	GPIOB->PCOR |= 0x00040000;
-}
-void LEDG(void){
-	GPIOB->PCOR |= 0x00080000;
-}
-void LEDB(void){
-	GPIOD->PCOR |= 0x00000002;
-}
-
-void LEDS_OFF(){
-	GPIOB->PSOR |= 0x00040000;
-	GPIOB->PSOR |= 0x00080000;
-	GPIOD->PSOR |= 0x00000002;
+void PORTB_Init(){
+	SIM->SCGC5 |= (1 << 10);
+	PORTB->PCR[18] |= (1 << 8);
+	PORTB->PCR[19] |= (1 << 8);
+	GPIOB->PSOR |= (3 << 18);
+	GPIOB->PDDR |= (3 << 18);
 }
